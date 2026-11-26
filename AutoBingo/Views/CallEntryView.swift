@@ -12,6 +12,8 @@ struct CallEntryView: View {
     @State private var recropResult: CroppedPhoto?
 
     private var parsed: Int? { CallParser.parse(text) }
+    private var alreadyCalled: Bool { parsed.map(store.game.calledNumbers.contains) ?? false }
+    private var canCall: Bool { parsed != nil && !alreadyCalled }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -40,6 +42,10 @@ struct CallEntryView: View {
                 Label(feedback.message, systemImage: feedback.isWarning ? "exclamationmark.triangle" : "checkmark.circle")
                     .font(.subheadline)
                     .foregroundStyle(feedback.isWarning ? .orange : .secondary)
+            } else if alreadyCalled, let parsed {
+                Label("\(BingoColumn.label(for: parsed)) was already called", systemImage: "exclamationmark.triangle")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
             } else if !text.isEmpty && parsed == nil {
                 Text("Enter a number from 1 to 75")
                     .font(.subheadline)
@@ -56,7 +62,7 @@ struct CallEntryView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Call") { submitTyped() }
-                    .disabled(parsed == nil)
+                    .disabled(!canCall)
                 Button("Done") { isFocused = false }
             }
         }
@@ -106,7 +112,7 @@ struct CallEntryView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
-            .disabled(parsed == nil)
+            .disabled(!canCall)
         }
     }
 
@@ -140,7 +146,7 @@ struct CallEntryView: View {
     }
 
     private func submitTyped() {
-        guard let number = parsed else { return }
+        guard canCall, let number = parsed else { return }
         if store.applyCall(number) != .invalid { text = "" }
     }
 }
