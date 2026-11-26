@@ -82,6 +82,21 @@ struct MarkingTests {
         #expect(BingoEngine.markedCells(on: board, called: [33], freeCenter: false) == [.center])
     }
 
+    @Test func replaceCallsFromBoardPhoto() {
+        var game = BingoGame(boards: [sampleBoard()])
+        game.call(40); game.call(5); game.call(70)
+        // Photo shows 5, 70, 12, 3, 61 lit (61 the latest); 40 isn't lit any more; 99 is junk.
+        game.replaceCalls(with: [5, 70, 12, 3, 61, 99], latest: 61)
+        #expect(game.calls == [5, 70, 3, 12, 61], "Kept calls keep their order, new ones follow, latest last")
+        #expect(game.lastCall == 61)
+
+        game.replaceCalls(with: [5, 70], latest: 44)
+        #expect(game.calls == [5, 70], "A latest number that isn't lit is ignored")
+
+        game.replaceCalls(with: [])
+        #expect(game.calls.isEmpty)
+    }
+
     @Test func undoRemoveAndNewGame() {
         var game = BingoGame(boards: [sampleBoard()])
         game.call(1); game.call(2); game.call(3)

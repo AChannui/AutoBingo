@@ -8,6 +8,8 @@
 #   ./dev.sh photos                Add TestPhotos/* to the simulator's Photos (skips ones already there)
 #   ./dev.sh ocr photo.jpg ...     Show what the app would read from photos of the bingo screen
 #   ./dev.sh ocr-board card.jpg    Show the 5×5 numbers the app would read from a card photo
+#   ./dev.sh ocr-called screen.jpg Show which numbers are lit on a photo of the caller's board
+#                                  (OVERLAY=out.png also saves the photo with each number's box drawn)
 #   ./dev.sh demo-call photo.jpg   Launch the app straight into "Confirm call" for that photo,
 #                                  then save a screenshot (debug builds only)
 #   ./dev.sh demo-board card.jpg   Launch the app, scan that card photo into Board 1, screenshot
@@ -121,6 +123,13 @@ case "${1:-}" in
         for f in "$@"; do files+=("$(absolute "$f")"); done
         (cd BingoKit && swift run -c release --quiet bingo-ocr --board "${files[@]}")
         ;;
+    ocr-called)
+        shift
+        [[ $# -gt 0 ]] || { echo "Usage: ./dev.sh ocr-called screen.jpg [more.jpg ...]"; exit 1; }
+        files=()
+        for f in "$@"; do files+=("$(absolute "$f")"); done
+        (cd BingoKit && swift run -c release --quiet bingo-ocr --called "${files[@]}")
+        ;;
     demo-board)
         [[ $# -ge 2 ]] || { echo "Usage: ./dev.sh demo-board card.jpg [out.png]"; exit 1; }
         photo=$(absolute "$2")
@@ -152,7 +161,7 @@ case "${1:-}" in
         screenshot "${3:-demo-call.png}"
         ;;
     *)
-        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac

@@ -52,6 +52,22 @@ final class GameStore {
         return result
     }
 
+    /// Makes the called numbers exactly what a photo of the caller's board showed,
+    /// adding and removing as needed, and says what changed.
+    func replaceCalls(with numbers: Set<Int>, latest: Int?) {
+        let before = game.calledNumbers
+        game.replaceCalls(with: numbers, latest: latest)
+        let added = numbers.subtracting(before).count
+        let removed = before.subtracting(numbers).count
+        var parts: [String] = []
+        if added > 0 { parts.append("\(added) added") }
+        if removed > 0 { parts.append("\(removed) removed") }
+        callFeedback = CallFeedback(
+            message: "Updated from photo — \(numbers.count) called" + (parts.isEmpty ? ", no changes" : " (\(parts.joined(separator: ", ")))"),
+            isWarning: false
+        )
+    }
+
     func undoLastCall() {
         if let undone = game.undoLastCall() {
             callFeedback = CallFeedback(message: "Removed \(BingoColumn.label(for: undone))", isWarning: false)

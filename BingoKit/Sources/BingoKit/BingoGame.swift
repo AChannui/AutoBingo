@@ -81,6 +81,22 @@ public struct BingoGame: Codable, Hashable, Sendable {
         calls.removeAll { $0 == number }
     }
 
+    /// Makes the called numbers exactly `numbers` — used when a photo of the caller's board,
+    /// which shows every call so far, is the source of truth.
+    ///
+    /// The photo doesn't say what order numbers were called in, so calls already made keep
+    /// their order and new ones follow, lowest first — except `latest`, which goes last
+    /// (if it's one of `numbers`). Invalid numbers are ignored.
+    public mutating func replaceCalls(with numbers: Set<Int>, latest: Int? = nil) {
+        let valid = numbers.filter { BingoColumn.validNumbers.contains($0) }
+        let latest = latest.flatMap { valid.contains($0) ? $0 : nil }
+        var result = calls.filter { valid.contains($0) && $0 != latest }
+        let kept = Set(result)
+        result += valid.filter { !kept.contains($0) && $0 != latest }.sorted()
+        if let latest { result.append(latest) }
+        calls = result
+    }
+
     /// Clears the calls. Rules, free-center setting and saved boards carry over; the boards
     /// in play optionally do too (otherwise everything is put aside, ready to pick again).
     public mutating func startNewGame(keepActiveBoards: Bool) {

@@ -2,6 +2,7 @@ import BingoKit
 import SwiftUI
 
 /// Photograph the big screen (or type the number), confirm it, and see recent calls.
+/// A photo of the caller's board updates every called number at once; typing adds one.
 struct CallEntryView: View {
     @Environment(GameStore.self) private var store
     @State private var text = ""

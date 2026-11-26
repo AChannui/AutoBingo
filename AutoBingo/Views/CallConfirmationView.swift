@@ -4,6 +4,10 @@ import SwiftUI
 
 /// Shows what was read from a photo of the bingo screen and lets the player
 /// confirm or correct it before it's applied to the boards.
+///
+/// If the photo shows the caller's board (every number, with the called ones lit), that's read
+/// and becomes the called numbers, replacing what was there — the board is the source of truth.
+/// Otherwise the photo is read for the single called ball.
 struct CallConfirmationView: View {
     @Environment(GameStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -14,10 +18,16 @@ struct CallConfirmationView: View {
     @State private var phase: Phase = .reading
     @State private var text = ""
     @FocusState private var editing: Bool
+    /// Board mode: the numbers to apply, starting from what the photo showed.
+    @State private var boardSelection: Set<Int> = []
+    @State private var confirmingRemoval = false
+    /// Set when the person says the photo isn't of the caller's board after all.
+    @State private var readAsSingleCall = false
 
     private enum Phase {
         case reading
         case finished([CallCandidate])
+        case board(CalledBoardReading)
         case failed(String)
     }
 
@@ -45,10 +55,20 @@ struct CallConfirmationView: View {
 
                     switch phase {
                     case .reading:
-                        ProgressView("Reading the number…")
+                        ProgressView("Reading the photo…")
                             .padding()
                     case .finished(let candidates):
                         result(candidates)
+                    case .board(let reading):
+                        CalledBoardReviewView(reading: reading, selection: $boardSelection,
+                                              current: store.game.calledNumbers)
+                        Button("Not the board? Read the called ball instead") {
+                            readAsSingleCall = true
+                            text = ""
+                            phase = .reading
+                            readCount += 1
+                        }
+                        .font(.subheadline)
                     case .failed(let message):
                         Label(message, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
@@ -57,7 +77,7 @@ struct CallConfirmationView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Confirm call")
+            .navigationTitle(isBoard ? "Check called numbers" : "Confirm call")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -77,6 +97,7 @@ struct CallConfirmationView: View {
                     photo = result
                     store.lastCallPhoto = result
                     text = ""
+                    readAsSingleCall = false
                     phase = .reading
                     readCount += 1
                 }
@@ -138,7 +159,65 @@ struct CallConfirmationView: View {
             .frame(maxWidth: 240)
     }
 
+    @ViewBuilder
     private var applyButton: some View {
+        if case .board = phase {
+            boardApplyButton
+        } else {
+            singleCallApplyButton
+        }
+    }
+
+    private var boardChanges: (added: Set<Int>, removed: Set<Int>) {
+        let current = store.game.calledNumbers
+        return (boardSelection.subtracting(current), current.subtracting(boardSelection))
+    }
+
+    private var boardApplyButton: some View {
+        let (added, removed) = boardChanges
+        let unchanged = added.isEmpty && removed.isEmpty
+        return Button {
+            if unchanged {
+                dismiss()
+            } else if removed.isEmpty {
+                applyBoard()
+            } else {
+                confirmingRemoval = true
+            }
+        } label: {
+            Text(unchanged ? "Done" : "Replace called numbers (\(boardSelection.count))")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding()
+        .background(.bar)
+        .confirmationDialog(
+            "Replace your called numbers?",
+            isPresented: $confirmingRemoval,
+            titleVisibility: .visible
+        ) {
+            Button("Replace", role: .destructive) { applyBoard() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let labels = removed.sorted().map(BingoColumn.label(for:)).joined(separator: ", ")
+            Text("The photo doesn't show \(labels) as called, so \(removed.count == 1 ? "it" : "they") will be removed. \(added.isEmpty ? "" : "\(added.count) new number\(added.count == 1 ? "" : "s") will be added.")")
+        }
+    }
+
+    private func applyBoard() {
+        guard case .board(let reading) = phase else { return }
+        store.replaceCalls(with: boardSelection, latest: reading.latest)
+        dismiss()
+    }
+
+    private var isBoard: Bool {
+        if case .board = phase { return true }
+        return false
+    }
+
+    private var singleCallApplyButton: some View {
         VStack(spacing: 8) {
             if alreadyCalled, let parsed {
                 Label("\(BingoColumn.label(for: parsed)) was already called", systemImage: "exclamationmark.triangle")
@@ -182,6 +261,12 @@ struct CallConfirmationView: View {
             return
         }
         do {
+            if !readAsSingleCall,
+               let reading = try await CalledBoardRecognizer.recognize(cgImage, orientation: image.visionOrientation) {
+                boardSelection = reading.called
+                phase = .board(reading)
+                return
+            }
             let candidates = try await CallRecognizer.recognize(cgImage, orientation: image.visionOrientation)
             if let top = candidates.first { text = "\(top.number)" }
             phase = .finished(candidates)
