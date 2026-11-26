@@ -88,17 +88,60 @@ struct MarkingTests {
         #expect(game.undoLastCall() == 3)
         game.removeCall(1)
         #expect(game.calls == [2])
-        game.startNewGame(keepBoards: true)
+        game.startNewGame(keepActiveBoards: true)
         #expect(game.calls.isEmpty)
-        #expect(game.boards[0] == sampleBoard().withID(game.boards[0].id))
-        game.startNewGame(keepBoards: false)
-        #expect(game.boards.count == 3 && game.boards.allSatisfy(\.isEmpty))
+        #expect(game.activeBoards.count == 1)
+        game.call(4)
+        game.startNewGame(keepActiveBoards: false)
+        #expect(game.calls.isEmpty)
+        #expect(game.boards.count == 1, "Saved boards are kept")
+        #expect(game.activeBoards.isEmpty)
+    }
+
+    @Test func onlyActiveBoardsCountForHitsAndWins() {
+        let a = sampleBoard(name: "A"), b = sampleBoard(name: "B")
+        var game = BingoGame(boards: [a, b], activeBoardIDs: [b.id], freeCenter: false)
+        for n in [1, 16, 31, 46, 61] { game.call(n) }  // top row
+        #expect(game.boards(containing: 1).map(\.name) == ["B"])
+        #expect(game.winningBoards.map(\.name) == ["B"])
+        game.setActive(true, boardID: a.id)
+        #expect(game.winningBoards.map(\.name) == ["B", "A"], "A board switched on mid-game picks up earlier calls")
+        game.setActive(false, boardID: b.id)
+        #expect(game.activeBoards.map(\.name) == ["A"])
+        #expect(game.inactiveBoards.map(\.name) == ["B"])
+    }
+
+    @Test func removingABoardTakesItOutOfPlay() {
+        let a = sampleBoard(name: "A"), b = sampleBoard(name: "B")
+        var game = BingoGame(boards: [a, b])
+        game.removeBoard(id: a.id)
+        #expect(game.activeBoardIDs == [b.id])
+        game.setActive(true, boardID: a.id)  // no longer saved: ignored
+        #expect(game.activeBoardIDs == [b.id])
+    }
+
+    @Test func manyBoardsCanBeSavedAndActive() {
+        var game = BingoGame()
+        for _ in 0..<8 { game.addBoard(BingoBoard(name: game.nextBoardName())) }
+        #expect(game.boards.count == 8 && game.activeBoards.isEmpty)
+        #expect(game.boards.last?.name == "Board 8")
+        game.setActiveBoards(game.boards.prefix(5).map(\.id))
+        #expect(game.activeBoards.count == 5 && game.inactiveBoards.count == 3)
+    }
+
+    @Test func oldSavesWithoutActiveListPlayEveryBoard() throws {
+        let board = sampleBoard()
+        let old = #"{"boards":[\#(String(decoding: try JSONEncoder().encode(board), as: UTF8.self))],"calls":[5],"freeCenter":true,"rule":\#(String(decoding: try JSONEncoder().encode(WinningRule.fiveInARow), as: UTF8.self))}"#
+        let game = try JSONDecoder().decode(BingoGame.self, from: Data(old.utf8))
+        #expect(game.activeBoardIDs == [board.id])
+        #expect(game.calls == [5])
     }
 
     @Test func gameRoundTripsThroughJSON() throws {
         var game = BingoGame(boards: [sampleBoard()], freeCenter: false,
                              rule: shapeRule(.tShape, .corners([.topLeft]), .rotations, .atLeast(2)))
         game.call(12)
+        game.addBoard(sampleBoard(name: "Saved"))
         let decoded = try JSONDecoder().decode(BingoGame.self, from: JSONEncoder().encode(game))
         #expect(decoded == game)
     }

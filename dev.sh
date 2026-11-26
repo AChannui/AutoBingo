@@ -10,6 +10,7 @@
 #   ./dev.sh demo-call photo.jpg   Launch the app straight into "Confirm call" for that photo,
 #                                  then save a screenshot (debug builds only)
 #   ./dev.sh demo-board card.jpg   Launch the app, scan that card photo into Board 1, screenshot
+#   ./dev.sh demo-bulk a.jpg b.jpg  Launch the app, add a board for each card photo at once, screenshot
 #
 # Pick a different simulator with SIM_NAME, e.g.  SIM_NAME="iPhone 17" ./dev.sh run
 
@@ -94,6 +95,18 @@ case "${1:-}" in
         sleep 6
         screenshot "${3:-demo-board.png}"
         ;;
+    demo-bulk)
+        shift
+        [[ $# -gt 0 ]] || { echo "Usage: ./dev.sh demo-bulk card.jpg [more.jpg ...]"; exit 1; }
+        paths=()
+        for f in "$@"; do paths+=("$(absolute "$f")"); done
+        joined=$(IFS='|'; echo "${paths[*]}")
+        build
+        boot_and_install
+        xcrun simctl launch "$(sim_id)" "$APP_ID" -demoBulkBoardImages "$joined" >/dev/null
+        sleep 8
+        screenshot demo-bulk.png
+        ;;
     demo-call)
         [[ $# -ge 2 ]] || { echo "Usage: ./dev.sh demo-call photo.jpg [out.png]"; exit 1; }
         photo=$(absolute "$2")
@@ -104,7 +117,7 @@ case "${1:-}" in
         screenshot "${3:-demo-call.png}"
         ;;
     *)
-        sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac

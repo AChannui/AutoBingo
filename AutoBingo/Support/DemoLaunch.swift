@@ -13,7 +13,25 @@ enum DemoLaunch {
     /// `-demoCropImage /path.jpg` — open the crop screen with this photo.
     static var cropImage: UIImage? { image(forKey: "demoCropImage") }
 
+    /// `-demoBulkBoardImages "/a.jpg|/b.jpg"` — add a board for each photo, as if picked together.
+    static var bulkBoardImages: [UIImage] {
+        #if DEBUG
+        if let paths = UserDefaults.standard.string(forKey: "demoBulkBoardImages") {
+            return paths.split(separator: "|").compactMap { UIImage(contentsOfFile: String($0)) }
+        }
+        #endif
+        return []
+    }
+
     private static var usedBoardImage = false
+    private static var usedBulkImages = false
+
+    /// Hands out the bulk demo photos once.
+    static func takeBulkBoardImages() -> [UIImage] {
+        guard !usedBulkImages else { return [] }
+        usedBulkImages = true
+        return bulkBoardImages
+    }
     private static var openedDemoBoard = false
     private static var usedCropImage = false
 

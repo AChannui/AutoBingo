@@ -1,7 +1,7 @@
 import BingoKit
 import SwiftUI
 
-/// The main screen: current rule, call entry, and the three boards.
+/// The main screen: current rule, call entry, and the boards in play.
 struct GameView: View {
     @Environment(GameStore.self) private var store
     @State private var showingRules = false
@@ -17,14 +17,14 @@ struct GameView: View {
                 VStack(spacing: 16) {
                     ruleSummary
 
-                    if game.boards.allSatisfy(\.isEmpty) {
+                    if game.activeBoards.allSatisfy(\.isEmpty) {
                         setupPrompt
                     } else {
                         CallEntryView()
                         winnerBanner
                     }
 
-                    ForEach(game.boards) { board in
+                    ForEach(game.activeBoards) { board in
                         BoardCardView(
                             board: board,
                             marked: game.markedCells(on: board),
@@ -40,7 +40,9 @@ struct GameView: View {
             .navigationTitle("Cruise Bingo")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Boards") { showingBoards = true }
+                    Button(game.boards.isEmpty ? "Boards" : "Boards (\(game.activeBoards.count)/\(game.boards.count))") {
+                        showingBoards = true
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -57,14 +59,14 @@ struct GameView: View {
             .sheet(isPresented: $showingBoards) { BoardSetupView() }
             .sheet(isPresented: $showingHistory) { CallHistoryView() }
             .task {
-                if DemoLaunch.boardImage != nil { showingBoards = true }
+                if DemoLaunch.boardImage != nil || !DemoLaunch.bulkBoardImages.isEmpty { showingBoards = true }
             }
             .confirmationDialog("Start a new game?", isPresented: $confirmingNewGame, titleVisibility: .visible) {
                 Button("New game, keep these boards") {
-                    store.game.startNewGame(keepBoards: true)
+                    store.game.startNewGame(keepActiveBoards: true)
                 }
-                Button("New game with new boards", role: .destructive) {
-                    store.game.startNewGame(keepBoards: false)
+                Button("New game, pick other boards") {
+                    store.game.startNewGame(keepActiveBoards: false)
                     showingBoards = true
                 }
             } message: {
@@ -101,9 +103,14 @@ struct GameView: View {
             Image(systemName: "square.grid.3x3.fill")
                 .font(.largeTitle)
                 .foregroundStyle(Color.accentColor)
-            Text("Enter your three boards to start")
+            Text(game.boards.isEmpty ? "Scan your boards to start" : "Pick which boards to play")
                 .font(.headline)
-            Button("Set up boards") { showingBoards = true }
+            if !game.boards.isEmpty {
+                Text("You have \(game.boards.count) saved board\(game.boards.count == 1 ? "" : "s").")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Button(game.boards.isEmpty ? "Set up boards" : "Choose boards") { showingBoards = true }
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)

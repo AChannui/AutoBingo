@@ -2,11 +2,15 @@ import BingoKit
 import BingoRecognition
 import SwiftUI
 
-/// Lists the three board slots; tap one to scan or type in its numbers.
+/// Every saved board, split into the ones in play and the ones put aside.
+/// Scan a whole stack of cards at once, then switch boards in and out of play whenever you like.
 struct BoardSetupView: View {
     @Environment(GameStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State private var path: [UUID] = []
+    @State private var boardToDelete: BingoBoard?
+
+    private var game: BingoGame { store.game }
 
     var body: some View {
         @Bindable var store = store
@@ -14,17 +18,45 @@ struct BoardSetupView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    ForEach(store.game.boards) { board in
-                        NavigationLink(value: board.id) {
-                            HStack {
-                                Text(board.name)
-                                Spacer()
-                                status(for: board)
-                            }
+                    BulkScanButtons { photos in store.addBoards(from: photos) }
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                } footer: {
+                    Text("Scan cards one after another, or pick several photos at once. New boards are saved here — tap the circle to play one.")
+                }
+
+                Section {
+                    if game.activeBoards.isEmpty {
+                        Text("No boards in play. Tap the circle next to a saved board to play it.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(game.activeBoards) { row(for: $0) }
+                } header: {
+                    HStack {
+                        Text("Playing (\(game.activeBoards.count))")
+                        Spacer()
+                        if !game.activeBoards.isEmpty {
+                            Button("Put all aside") { store.game.setActiveBoards([]) }
+                                .font(.footnote)
+                                .textCase(nil)
                         }
                     }
-                } footer: {
-                    Text("Photograph each card, then check the numbers against it. You can also type them in.")
+                }
+
+                if !game.inactiveBoards.isEmpty {
+                    Section {
+                        ForEach(game.inactiveBoards) { row(for: $0) }
+                    } header: {
+                        HStack {
+                            Text("Saved (\(game.inactiveBoards.count))")
+                            Spacer()
+                            Button("Play all") {
+                                store.game.setActiveBoards(game.activeBoardIDs + game.inactiveBoards.map(\.id))
+                            }
+                            .font(.footnote)
+                            .textCase(nil)
+                        }
+                    }
                 }
             }
             .navigationTitle("Boards")
@@ -37,19 +69,71 @@ struct BoardSetupView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Type in a board", systemImage: "plus") {
+                        let board = BingoBoard(name: store.game.nextBoardName())
+                        store.game.addBoard(board)
+                        path = [board.id]
+                    }
+                }
+            }
+            .confirmationDialog(
+                "Delete \(boardToDelete?.name ?? "board")?",
+                isPresented: Binding(get: { boardToDelete != nil }, set: { if !$0 { boardToDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: boardToDelete
+            ) { board in
+                Button("Delete board", role: .destructive) { store.removeBoard(id: board.id) }
+            } message: { _ in
+                Text("Its numbers and photo will be removed from the phone.")
             }
             .task {
                 BoardPhotoStore.removePhotos(except: store.game.boards.map(\.id))
-                if DemoLaunch.shouldOpenDemoBoard(), let first = store.game.boards.first {
-                    path = [first.id]
+                let demoPhotos = DemoLaunch.takeBulkBoardImages()
+                if !demoPhotos.isEmpty { store.addBoards(from: demoPhotos.map { CroppedPhoto(original: $0) }) }
+                if DemoLaunch.shouldOpenDemoBoard() {
+                    if store.game.boards.isEmpty { store.game.addBoard(BingoBoard(name: "Board 1"), active: true) }
+                    if let first = store.game.boards.first { path = [first.id] }
                 }
             }
         }
     }
 
+    private func row(for board: BingoBoard) -> some View {
+        let isActive = game.isActive(board.id)
+        return HStack(spacing: 12) {
+            Button {
+                withAnimation { store.game.setActive(!isActive, boardID: board.id) }
+            } label: {
+                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(isActive ? "Stop playing \(board.name)" : "Play \(board.name)")
+
+            NavigationLink(value: board.id) {
+                HStack {
+                    Text(board.name)
+                    Spacer()
+                    status(for: board)
+                }
+            }
+        }
+        .swipeActions {
+            Button("Delete", systemImage: "trash", role: .destructive) { boardToDelete = board }
+        }
+    }
+
     @ViewBuilder
     private func status(for board: BingoBoard) -> some View {
-        if board.isEmpty {
+        if store.scanningBoardIDs.contains(board.id) {
+            HStack(spacing: 6) {
+                ProgressView()
+                Text("Reading…")
+            }
+            .foregroundStyle(.secondary)
+        } else if board.isEmpty {
             Text("Empty").foregroundStyle(.secondary)
         } else if board.isReadyToPlay {
             Label("Ready", systemImage: "checkmark.circle.fill")
@@ -65,6 +149,7 @@ struct BoardSetupView: View {
 /// Scan or type one card's 25 numbers, with problems and doubtful scans highlighted.
 struct BoardEditorView: View {
     @Binding var board: BingoBoard
+    @Environment(GameStore.self) private var store
     @FocusState private var focusedCell: Cell?
     @State private var confirmingClear = false
 
@@ -75,7 +160,11 @@ struct BoardEditorView: View {
     @State private var showingFullPhoto = false
     @State private var recropping: CroppedPhoto?
     @State private var scanMessage: String?
-    @State private var uncertainCells: Set<Cell> = []
+    /// Kept in the store so squares flagged by a bulk scan are still highlighted here.
+    private var uncertainCells: Set<Cell> {
+        get { store.uncertainCells[board.id] ?? [] }
+        nonmutating set { store.uncertainCells[board.id] = newValue.isEmpty ? nil : newValue }
+    }
     @State private var numbersBeforeScan: [Int?]?
 
     /// Bingo cards are easiest to type column by column (B 1–15, then I 16–30, …).
@@ -92,6 +181,11 @@ struct BoardEditorView: View {
                 TextField("Board name", text: $board.name)
                     .font(.title2.weight(.semibold))
                     .textFieldStyle(.roundedBorder)
+
+                Toggle("Playing this board", isOn: Binding(
+                    get: { store.game.isActive(board.id) },
+                    set: { store.game.setActive($0, boardID: board.id) }
+                ))
 
                 scanSection
 
