@@ -5,6 +5,7 @@
 #   ./dev.sh build                 Build the app for the iPhone simulator
 #   ./dev.sh run                   Build, install and launch in the simulator
 #   ./dev.sh screenshot [out.png]  Save a screenshot of the simulator
+#   ./dev.sh photos                Add TestPhotos/* to the simulator's Photos (skips ones already there)
 #   ./dev.sh ocr photo.jpg ...     Show what the app would read from photos of the bingo screen
 #   ./dev.sh ocr-board card.jpg    Show the 5×5 numbers the app would read from a card photo
 #   ./dev.sh demo-call photo.jpg   Launch the app straight into "Confirm call" for that photo,
@@ -54,6 +55,37 @@ screenshot() {
     echo "Saved $out"
 }
 
+# Adds each TestPhotos file to the simulator's photo library unless a photo with
+# that original filename is already in it. `simctl addmedia` never checks for
+# duplicates itself, so running it twice adds every photo twice.
+add_test_photos() {
+    local id db existing f missing=()
+    id=$(sim_id)
+    xcrun simctl boot "$id" 2>/dev/null || true
+    xcrun simctl bootstatus "$id" -b >/dev/null
+    db="$HOME/Library/Developer/CoreSimulator/Devices/$id/data/Media/PhotoData/Photos.sqlite"
+    existing=""
+    if [[ -f "$db" ]]; then
+        existing=$(sqlite3 -readonly "$db" \
+            "SELECT b.ZORIGINALFILENAME FROM ZASSET a
+             JOIN ZADDITIONALASSETATTRIBUTES b ON b.ZASSET = a.Z_PK
+             WHERE a.ZTRASHEDSTATE = 0" 2>/dev/null || true)
+    fi
+    shopt -s nullglob nocaseglob
+    for f in TestPhotos/*.{jpg,jpeg,png,heic}; do
+        if ! grep -qixF "$(basename "$f")" <<<"$existing"; then
+            missing+=("$f")
+        fi
+    done
+    shopt -u nullglob nocaseglob
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        echo "All TestPhotos are already in the '$SIM_NAME' simulator's Photos."
+        return
+    fi
+    xcrun simctl addmedia "$id" "${missing[@]}"
+    echo "Added ${#missing[@]} photo(s) to the '$SIM_NAME' simulator."
+}
+
 absolute() { (cd "$(dirname "$1")" && echo "$PWD/$(basename "$1")"); }
 
 case "${1:-}" in
@@ -71,6 +103,9 @@ case "${1:-}" in
         ;;
     screenshot)
         screenshot "${2:-screenshot.png}"
+        ;;
+    photos)
+        add_test_photos
         ;;
     ocr)
         shift
@@ -117,7 +152,7 @@ case "${1:-}" in
         screenshot "${3:-demo-call.png}"
         ;;
     *)
-        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac
