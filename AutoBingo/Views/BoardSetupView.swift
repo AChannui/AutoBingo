@@ -2,31 +2,55 @@ import BingoKit
 import BingoRecognition
 import SwiftUI
 
-/// Every saved board, split into the ones in play and the ones put aside.
-/// Scan a whole stack of cards at once, then switch boards in and out of play whenever you like.
+/// Screens reachable from the Boards list.
+enum BoardsRoute: Hashable {
+    case board(UUID)
+    case group(UUID)
+}
+
+/// Every saved board, split into the ones in play and the ones put aside, plus groups of boards.
+/// Scan a whole stack of cards at once, then switch boards (or whole groups) in and out of play.
 struct BoardSetupView: View {
     @Environment(GameStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [UUID] = []
+    @State private var path: [BoardsRoute] = []
     @State private var boardToDelete: BingoBoard?
+    @State private var groupToDelete: BoardGroup?
+
+    // Select mode, for deleting many boards and groups at once.
+    @State private var editMode: EditMode = .inactive
+    @State private var selection: Set<BoardsRoute> = []
+    @State private var confirmingBulkDelete = false
 
     private var game: BingoGame { store.game }
+    private var isSelecting: Bool { editMode.isEditing }
+
+    private var selectedBoardIDs: Set<UUID> {
+        Set(selection.compactMap { if case .board(let id) = $0 { id } else { nil } })
+    }
+    private var selectedGroupIDs: Set<UUID> {
+        Set(selection.compactMap { if case .group(let id) = $0 { id } else { nil } })
+    }
 
     var body: some View {
         @Bindable var store = store
 
         NavigationStack(path: $path) {
-            List {
-                Section {
-                    BulkScanButtons { photos in store.addBoards(from: photos) }
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                } footer: {
-                    Text("Scan cards one after another, or pick several photos at once. New boards are saved here — tap the circle to play one.")
+            List(selection: $selection) {
+                if !isSelecting {
+                    Section {
+                        BulkScanButtons { photos in store.addBoards(from: photos) }
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    } footer: {
+                        Text("Scan cards one after another, or pick several photos at once. New boards are saved here — tap the circle (or swipe right) to play one.")
+                    }
                 }
 
+                groupsSection
+
                 Section {
-                    if game.activeBoards.isEmpty {
+                    if game.activeBoards.isEmpty && !isSelecting {
                         Text("No boards in play. Tap the circle next to a saved board to play it.")
                             .foregroundStyle(.secondary)
                     }
@@ -35,7 +59,7 @@ struct BoardSetupView: View {
                     HStack {
                         Text("Playing (\(game.activeBoards.count))")
                         Spacer()
-                        if !game.activeBoards.isEmpty {
+                        if !game.activeBoards.isEmpty && !isSelecting {
                             Button("Put all aside") { store.game.setActiveBoards([]) }
                                 .font(.footnote)
                                 .textCase(nil)
@@ -50,32 +74,89 @@ struct BoardSetupView: View {
                         HStack {
                             Text("Saved (\(game.inactiveBoards.count))")
                             Spacer()
-                            Button("Play all") {
-                                store.game.setActiveBoards(game.activeBoardIDs + game.inactiveBoards.map(\.id))
+                            if !isSelecting {
+                                Button("Play all") {
+                                    store.game.setActiveBoards(game.activeBoardIDs + game.inactiveBoards.map(\.id))
+                                }
+                                .font(.footnote)
+                                .textCase(nil)
                             }
-                            .font(.footnote)
-                            .textCase(nil)
                         }
                     }
                 }
             }
-            .navigationTitle("Boards")
-            .navigationDestination(for: UUID.self) { id in
-                if let index = store.game.boards.firstIndex(where: { $0.id == id }) {
-                    BoardEditorView(board: $store.game.boards[index])
+            .navigationTitle(isSelecting ? (selection.isEmpty ? "Select" : "\(selection.count) selected") : "Boards")
+            .environment(\.editMode, $editMode)
+            .onChange(of: editMode) { _, mode in if !mode.isEditing { selection = [] } }
+            .navigationDestination(for: BoardsRoute.self) { route in
+                switch route {
+                case .board(let id):
+                    if let index = store.game.boards.firstIndex(where: { $0.id == id }) {
+                        BoardEditorView(board: $store.game.boards[index])
+                    }
+                case .group(let id):
+                    if let index = store.game.groups.firstIndex(where: { $0.id == id }) {
+                        GroupEditorView(group: $store.game.groups[index])
+                    }
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Type in a board", systemImage: "plus") {
-                        let board = BingoBoard(name: store.game.nextBoardName())
-                        store.game.addBoard(board)
-                        path = [board.id]
+                if isSelecting {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { withAnimation { editMode = .inactive } }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        let allRoutes = Set(game.boards.map { BoardsRoute.board($0.id) } + game.groups.map { BoardsRoute.group($0.id) })
+                        Button(selection == allRoutes ? "Select none" : "Select all") {
+                            selection = selection == allRoutes ? [] : allRoutes
+                        }
+                    }
+                    ToolbarItem(placement: .bottomBar) {
+                        Button("Delete", systemImage: "trash", role: .destructive) { confirmingBulkDelete = true }
+                            .tint(.red)
+                            .disabled(selection.isEmpty)
+                    }
+                } else {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Type in a board", systemImage: "plus") {
+                            let board = BingoBoard(name: store.game.nextBoardName())
+                            store.game.addBoard(board)
+                            path = [.board(board.id)]
+                        }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Select") { withAnimation { editMode = .active } }
+                            .disabled(game.boards.isEmpty && game.groups.isEmpty)
                     }
                 }
+            }
+            .confirmationDialog(
+                bulkDeleteTitle,
+                isPresented: $confirmingBulkDelete,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    store.game.removeGroups(ids: selectedGroupIDs)
+                    store.removeBoards(ids: selectedBoardIDs)
+                    withAnimation { editMode = .inactive }
+                }
+            } message: {
+                Text(selectedBoardIDs.isEmpty
+                     ? "The boards in these groups stay saved."
+                     : "Deleted boards' numbers and photos are removed from the phone. This can't be undone.")
+            }
+            .confirmationDialog(
+                "Delete \(groupToDelete?.name ?? "group")?",
+                isPresented: Binding(get: { groupToDelete != nil }, set: { if !$0 { groupToDelete = nil } }),
+                titleVisibility: .visible,
+                presenting: groupToDelete
+            ) { group in
+                Button("Delete group", role: .destructive) { store.game.removeGroup(id: group.id) }
+            } message: { _ in
+                Text("Its boards stay saved.")
             }
             .confirmationDialog(
                 "Delete \(boardToDelete?.name ?? "board")?",
@@ -93,31 +174,65 @@ struct BoardSetupView: View {
                 if !demoPhotos.isEmpty { store.addBoards(from: demoPhotos.map { CroppedPhoto(original: $0) }) }
                 if DemoLaunch.shouldOpenDemoBoard() {
                     if store.game.boards.isEmpty { store.game.addBoard(BingoBoard(name: "Board 1"), active: true) }
-                    if let first = store.game.boards.first { path = [first.id] }
+                    if let first = store.game.boards.first { path = [.board(first.id)] }
                 }
             }
         }
     }
 
+    private var bulkDeleteTitle: String {
+        let boards = selectedBoardIDs.count, groups = selectedGroupIDs.count
+        let parts = [
+            boards > 0 ? "\(boards) board\(boards == 1 ? "" : "s")" : nil,
+            groups > 0 ? "\(groups) group\(groups == 1 ? "" : "s")" : nil,
+        ].compactMap { $0 }
+        return "Delete \(parts.joined(separator: " and "))?"
+    }
+
     private func row(for board: BingoBoard) -> some View {
         let isActive = game.isActive(board.id)
         return HStack(spacing: 12) {
-            Button {
-                withAnimation { store.game.setActive(!isActive, boardID: board.id) }
-            } label: {
-                Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(isActive ? Color.accentColor : .secondary)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(isActive ? "Stop playing \(board.name)" : "Play \(board.name)")
-
-            NavigationLink(value: board.id) {
-                HStack {
-                    Text(board.name)
-                    Spacer()
-                    status(for: board)
+            if !isSelecting {
+                Button {
+                    withAnimation { store.game.setActive(!isActive, boardID: board.id) }
+                } label: {
+                    Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isActive ? Color.accentColor : .secondary)
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isActive ? "Stop playing \(board.name)" : "Play \(board.name)")
+            }
+
+            NavigationLink(value: BoardsRoute.board(board.id)) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(board.name)
+                        let groupNames = game.groups(containing: board.id).map(\.name)
+                        if !groupNames.isEmpty {
+                            Text(groupNames.joined(separator: ", "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    BoardStatusLabel(board: board)
+                }
+            }
+        }
+        .tag(BoardsRoute.board(board.id))
+        .swipeActions(edge: .leading) {
+            if isActive {
+                Button("Put aside", systemImage: "pause.fill") {
+                    withAnimation { store.game.setActive(false, boardID: board.id) }
+                }
+                .tint(.gray)
+            } else {
+                Button("Play", systemImage: "play.fill") {
+                    withAnimation { store.game.setActive(true, boardID: board.id) }
+                }
+                .tint(.green)
             }
         }
         .swipeActions {
@@ -126,7 +241,91 @@ struct BoardSetupView: View {
     }
 
     @ViewBuilder
-    private func status(for board: BingoBoard) -> some View {
+    private var groupsSection: some View {
+        Section {
+            ForEach(game.groups) { group in
+                NavigationLink(value: BoardsRoute.group(group.id)) {
+                    GroupRow(group: group, showsPlayButton: !isSelecting)
+                }
+                .tag(BoardsRoute.group(group.id))
+                .swipeActions(edge: .leading) {
+                    if game.playState(of: group) == .playing {
+                        Button("Stop", systemImage: "stop.fill") {
+                            withAnimation { store.game.stopPlayingGroup(id: group.id) }
+                        }
+                        .tint(.gray)
+                    } else if !game.boards(in: group).isEmpty {
+                        Button("Play", systemImage: "play.fill") {
+                            withAnimation { store.game.playGroup(id: group.id) }
+                        }
+                        .tint(.green)
+                    }
+                }
+                .swipeActions {
+                    Button("Delete", systemImage: "trash", role: .destructive) { groupToDelete = group }
+                }
+            }
+            if !isSelecting {
+                Button("New group", systemImage: "folder.badge.plus") {
+                    // Start from whatever is playing — the common case is "save these as a set".
+                    let id = store.game.addGroup(name: store.game.nextGroupName(), boardIDs: game.activeBoardIDs)
+                    path = [.group(id)]
+                }
+            }
+        } header: {
+            Text("Groups")
+        } footer: {
+            if game.groups.isEmpty && !isSelecting {
+                Text("Group boards to put a whole set into play at once. A new group starts with the boards playing now.")
+            }
+        }
+    }
+}
+
+/// A group in the Boards list: its name, size, and a button to play just this group.
+private struct GroupRow: View {
+    let group: BoardGroup
+    var showsPlayButton = true
+    @Environment(GameStore.self) private var store
+
+    var body: some View {
+        let state = store.game.playState(of: group)
+        let count = store.game.boards(in: group).count
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.name)
+                Text("\(count) board\(count == 1 ? "" : "s")\(stateText(state))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if state == .playing {
+                Label("Playing", systemImage: "play.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.green)
+            } else if showsPlayButton {
+                Button("Play") { withAnimation { store.game.playGroup(id: group.id) } }
+                    .buttonStyle(.bordered)
+                    .disabled(count == 0)
+            }
+        }
+    }
+
+    private func stateText(_ state: BingoGame.GroupPlayState) -> String {
+        switch state {
+        case .notPlaying, .playing: ""
+        case .partlyPlaying: " · some playing"
+        case .playingWithOthers: " · all playing, with others"
+        }
+    }
+}
+
+/// "Ready", "Empty", "Reading…" or how many problems a board has.
+struct BoardStatusLabel: View {
+    let board: BingoBoard
+    @Environment(GameStore.self) private var store
+
+    var body: some View {
         if store.scanningBoardIDs.contains(board.id) {
             HStack(spacing: 6) {
                 ProgressView()

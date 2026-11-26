@@ -46,6 +46,23 @@ struct GameView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        if !game.groups.isEmpty {
+                            Menu("Play a group", systemImage: "folder") {
+                                ForEach(game.groups) { group in
+                                    Button {
+                                        store.game.playGroup(id: group.id)
+                                    } label: {
+                                        if game.playState(of: group) == .playing {
+                                            Label(group.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(group.name)
+                                        }
+                                    }
+                                    .disabled(game.boards(in: group).isEmpty)
+                                }
+                            }
+                            Divider()
+                        }
                         Button("Call history", systemImage: "list.number") { showingHistory = true }
                         Button("Winning rule", systemImage: "square.grid.3x3") { showingRules = true }
                         Divider()

@@ -1,13 +1,17 @@
 import Foundation
 
-/// Everything about the game in progress: every saved board, which of them are in play,
-/// the calls so far and the rules.
+/// Everything about the game in progress: every saved board, how they're grouped, which of them
+/// are in play, the calls so far and the rules.
 /// Marks are never stored — they're derived from `calls`, so undo is always safe, and a board
 /// switched into play mid-game picks up every number already called.
 public struct BingoGame: Codable, Hashable, Sendable {
     /// All saved boards, whether or not they're being played right now.
     public var boards: [BingoBoard] {
-        didSet { pruneActiveIDs() }
+        didSet { forgetDeletedBoards() }
+    }
+    /// Named sets of saved boards, for putting several into play at once.
+    public var groups: [BoardGroup] {
+        didSet { forgetDeletedBoards() }
     }
     /// The boards in play, in the order they were switched on. Only these are marked and checked for wins.
     public private(set) var activeBoardIDs: [UUID]
@@ -18,21 +22,23 @@ public struct BingoGame: Codable, Hashable, Sendable {
     /// - Parameter activeBoardIDs: which boards are in play; `nil` means all of them.
     public init(
         boards: [BingoBoard] = [],
+        groups: [BoardGroup] = [],
         activeBoardIDs: [UUID]? = nil,
         calls: [Int] = [],
         freeCenter: Bool = true,
         rule: WinningRule = .fiveInARow
     ) {
         self.boards = boards
+        self.groups = groups
         self.activeBoardIDs = activeBoardIDs ?? boards.map(\.id)
         self.calls = calls
         self.freeCenter = freeCenter
         self.rule = rule
-        pruneActiveIDs()
+        forgetDeletedBoards()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case boards, activeBoardIDs, calls, freeCenter, rule
+        case boards, groups, activeBoardIDs, calls, freeCenter, rule
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +46,7 @@ public struct BingoGame: Codable, Hashable, Sendable {
         let boards = try container.decode([BingoBoard].self, forKey: .boards)
         self.init(
             boards: boards,
+            groups: try container.decodeIfPresent([BoardGroup].self, forKey: .groups) ?? [],
             // Games saved before boards could be switched on and off had every board in play.
             activeBoardIDs: try container.decodeIfPresent([UUID].self, forKey: .activeBoardIDs),
             calls: try container.decode([Int].self, forKey: .calls),
@@ -113,7 +120,7 @@ public struct BingoGame: Codable, Hashable, Sendable {
     public mutating func setActiveBoards(_ boardIDs: [UUID]) {
         var seen = Set<UUID>()
         activeBoardIDs = boardIDs.filter { seen.insert($0).inserted }
-        pruneActiveIDs()
+        forgetDeletedBoards()
     }
 
     /// Saves a new board; it goes into play only if asked.
@@ -135,10 +142,99 @@ public struct BingoGame: Codable, Hashable, Sendable {
         return "Board \((used.max() ?? 0) + 1)"
     }
 
-    private mutating func pruneActiveIDs() {
+    // MARK: Groups
+
+    /// Saves a new group and returns its ID. Board IDs that aren't saved boards are ignored.
+    @discardableResult
+    public mutating func addGroup(name: String, boardIDs: [UUID] = []) -> UUID {
+        let group = BoardGroup(name: name, boardIDs: boardIDs)
+        groups.append(group)
+        return group.id
+    }
+
+    public mutating func removeGroup(id: UUID) {
+        groups.removeAll { $0.id == id }
+    }
+
+    public mutating func removeGroups(ids: Set<UUID>) {
+        groups.removeAll { ids.contains($0.id) }
+    }
+
+    public func group(id: UUID) -> BoardGroup? {
+        groups.first { $0.id == id }
+    }
+
+    /// The group's boards, in group order, skipping any that were deleted.
+    public func boards(in group: BoardGroup) -> [BingoBoard] {
+        let byID = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, $0) })
+        return group.boardIDs.compactMap { byID[$0] }
+    }
+
+    /// Groups this board belongs to.
+    public func groups(containing boardID: UUID) -> [BoardGroup] {
+        groups.filter { $0.contains(boardID) }
+    }
+
+    public mutating func setBoard(_ boardID: UUID, inGroup groupID: UUID, _ included: Bool) {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        if included {
+            guard boards.contains(where: { $0.id == boardID }), !groups[index].contains(boardID) else { return }
+            groups[index].boardIDs.append(boardID)
+        } else {
+            groups[index].boardIDs.removeAll { $0 == boardID }
+        }
+    }
+
+    /// Puts a group's boards into play. Replacing takes every other board out of play;
+    /// otherwise the group's boards are added after the ones already playing.
+    public mutating func playGroup(id: UUID, replacingActive: Bool = true) {
+        guard let group = group(id: id) else { return }
+        setActiveBoards((replacingActive ? [] : activeBoardIDs) + group.boardIDs)
+    }
+
+    /// Takes a group's boards out of play, leaving any others playing.
+    public mutating func stopPlayingGroup(id: UUID) {
+        guard let group = group(id: id) else { return }
+        activeBoardIDs.removeAll { group.contains($0) }
+    }
+
+    public enum GroupPlayState: Equatable, Sendable {
+        /// None of the group's boards are playing (or the group is empty).
+        case notPlaying
+        /// Some of its boards are playing.
+        case partlyPlaying
+        /// All of its boards are playing, along with others.
+        case playingWithOthers
+        /// Exactly this group's boards are playing.
+        case playing
+    }
+
+    public func playState(of group: BoardGroup) -> GroupPlayState {
+        let members = Set(group.boardIDs)
+        let active = Set(activeBoardIDs)
+        let playingMembers = members.intersection(active)
+        if members.isEmpty || playingMembers.isEmpty { return .notPlaying }
+        if playingMembers.count < members.count { return .partlyPlaying }
+        return active == members ? .playing : .playingWithOthers
+    }
+
+    /// "Group N", one past the highest such number already used.
+    public func nextGroupName() -> String {
+        let used = groups.compactMap { group -> Int? in
+            guard group.name.hasPrefix("Group ") else { return nil }
+            return Int(group.name.dropFirst("Group ".count))
+        }
+        return "Group \((used.max() ?? 0) + 1)"
+    }
+
+    /// Drops deleted boards from the play list and from every group.
+    private mutating func forgetDeletedBoards() {
         let saved = Set(boards.map(\.id))
         if activeBoardIDs.contains(where: { !saved.contains($0) }) {
             activeBoardIDs.removeAll { !saved.contains($0) }
+        }
+        for index in groups.indices where groups[index].boardIDs.contains(where: { !saved.contains($0) }) {
+            groups[index].boardIDs.removeAll { !saved.contains($0) }
         }
     }
 

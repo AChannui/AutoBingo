@@ -69,10 +69,12 @@ final class GameStore {
 
     /// Saves a new board for each photo right away and reads the numbers in the background,
     /// so a whole stack of cards can be added at once. New boards are saved but not in play.
-    func addBoards(from photos: [CroppedPhoto]) {
+    /// If a group is given, the new boards are added to it too.
+    func addBoards(from photos: [CroppedPhoto], toGroup groupID: UUID? = nil) {
         for photo in photos {
             let board = BingoBoard(name: game.nextBoardName())
             game.addBoard(board)
+            if let groupID { game.setBoard(board.id, inGroup: groupID, true) }
             BoardPhotoStore.save(photo, for: board.id)
             scanningBoardIDs.insert(board.id)
             // One at a time, in order: reading a card is heavy, and a stack of 20 at once would stall the phone.
@@ -99,8 +101,14 @@ final class GameStore {
 
     /// Deletes a saved board and its photo.
     func removeBoard(id: UUID) {
-        game.removeBoard(id: id)
-        uncertainCells[id] = nil
+        removeBoards(ids: [id])
+    }
+
+    /// Deletes several saved boards and their photos at once.
+    func removeBoards(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        game.boards.removeAll { ids.contains($0.id) }
+        for id in ids { uncertainCells[id] = nil }
         BoardPhotoStore.removePhotos(except: game.boards.map(\.id))
     }
 

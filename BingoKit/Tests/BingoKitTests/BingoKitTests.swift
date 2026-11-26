@@ -142,8 +142,56 @@ struct MarkingTests {
                              rule: shapeRule(.tShape, .corners([.topLeft]), .rotations, .atLeast(2)))
         game.call(12)
         game.addBoard(sampleBoard(name: "Saved"))
+        game.addGroup(name: "G", boardIDs: game.boards.map(\.id))
         let decoded = try JSONDecoder().decode(BingoGame.self, from: JSONEncoder().encode(game))
         #expect(decoded == game)
+    }
+}
+
+@Suite("Board groups")
+struct GroupTests {
+    let a = sampleBoard(name: "A"), b = sampleBoard(name: "B"), c = sampleBoard(name: "C")
+
+    @Test func playingAGroupReplacesOrAdds() {
+        var game = BingoGame(boards: [a, b, c], activeBoardIDs: [c.id])
+        let group = game.addGroup(name: "Night", boardIDs: [a.id, b.id])
+        game.playGroup(id: group, replacingActive: false)
+        #expect(game.activeBoardIDs == [c.id, a.id, b.id])
+        #expect(game.playState(of: game.group(id: group)!) == .playingWithOthers)
+        game.playGroup(id: group)
+        #expect(game.activeBoardIDs == [a.id, b.id])
+        #expect(game.playState(of: game.group(id: group)!) == .playing)
+        game.setActive(false, boardID: b.id)
+        #expect(game.playState(of: game.group(id: group)!) == .partlyPlaying)
+        game.stopPlayingGroup(id: group)
+        #expect(game.activeBoardIDs.isEmpty)
+        #expect(game.playState(of: game.group(id: group)!) == .notPlaying)
+    }
+
+    @Test func boardsCanBeInSeveralGroups() {
+        var game = BingoGame(boards: [a, b, c])
+        let one = game.addGroup(name: game.nextGroupName())
+        let two = game.addGroup(name: game.nextGroupName())
+        #expect(game.groups.map(\.name) == ["Group 1", "Group 2"])
+        game.setBoard(a.id, inGroup: one, true)
+        game.setBoard(a.id, inGroup: two, true)
+        game.setBoard(a.id, inGroup: two, true)  // already in: ignored
+        game.setBoard(b.id, inGroup: two, true)
+        #expect(game.groups(containing: a.id).count == 2)
+        #expect(game.group(id: two)?.boardIDs == [a.id, b.id])
+        game.setBoard(a.id, inGroup: two, false)
+        #expect(game.group(id: two)?.boardIDs == [b.id])
+    }
+
+    @Test func deletingABoardRemovesItFromGroups() {
+        var game = BingoGame(boards: [a, b])
+        let group = game.addGroup(name: "G", boardIDs: [a.id, b.id, UUID()])
+        #expect(game.group(id: group)?.boardIDs == [a.id, b.id], "Unknown boards are dropped")
+        game.removeBoard(id: a.id)
+        #expect(game.group(id: group)?.boardIDs == [b.id])
+        game.removeGroup(id: group)
+        #expect(game.groups.isEmpty)
+        #expect(game.boards.count == 1, "Deleting a group keeps its boards")
     }
 }
 
