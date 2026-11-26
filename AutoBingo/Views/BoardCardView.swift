@@ -23,7 +23,7 @@ struct BoardCardView: View {
                     isCenter: cell.isCenter,
                     isMarked: marked.contains(cell),
                     isWinning: progress.isWinner && progress.winningCells.contains(cell),
-                    isNeeded: !board.isEmpty && !progress.isWinner && progress.missingCells.contains(cell),
+                    isNeeded: !board.isEmpty && progress.highlightCells.contains(cell),
                     isLastCall: lastCall != nil && board[cell] == lastCall
                 )
             }

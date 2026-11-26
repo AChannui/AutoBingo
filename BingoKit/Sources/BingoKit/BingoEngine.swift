@@ -7,6 +7,13 @@ public struct RuleProgress: Hashable, Sendable {
     public let targetCells: Set<Cell>
     /// Cells in `targetCells` that still need to be called.
     public let missingCells: Set<Cell>
+    /// Cells worth pointing out during play: the missing cells of every placement tied for
+    /// closest, and only once the board is within `highlightDistance` numbers of winning.
+    /// Empty early on, when every line is equally far away and a hint would mean nothing.
+    public let highlightCells: Set<Cell>
+
+    /// How many numbers away a board must be before its missing cells are highlighted.
+    public static let highlightDistance = 2
 
     public var isWinner: Bool {
         totalPlacements > 0
@@ -49,13 +56,27 @@ public enum BingoEngine {
             .prefix(required)
             .map(\.element)
         let target = nearest.reduce(into: Set<Cell>()) { $0.formUnion($1) }
+        let missing = target.subtracting(marked)
+
+        // Highlight every placement as close as the furthest one we picked, so ties aren't
+        // decided by list order (which made the top row look "most likely" on a fresh card).
+        var highlight = Set<Cell>()
+        let isWinner = !placements.isEmpty && required <= placements.count && completed.count >= required
+        if !isWinner, !missing.isEmpty, missing.count <= RuleProgress.highlightDistance,
+           let cutoff = nearest.map({ $0.subtracting(marked).count }).max() {
+            for placement in placements {
+                let open = placement.subtracting(marked)
+                if open.count <= cutoff { highlight.formUnion(open) }
+            }
+        }
 
         return RuleProgress(
             totalPlacements: placements.count,
             requiredPlacements: required,
             completedPlacements: completed,
             targetCells: target,
-            missingCells: target.subtracting(marked)
+            missingCells: missing,
+            highlightCells: highlight
         )
     }
 

@@ -231,6 +231,40 @@ struct LineTests {
         #expect(!progress.isWinner)
         #expect(progress.cellsAway == 1)
         #expect(progress.missingCells == [Cell(0, 4)])
+        #expect(progress.highlightCells == [Cell(0, 4)])
+    }
+
+    @Test func nothingHighlightedOnAFreshCard() {
+        let progress = BingoEngine.evaluate(rule, marked: [])
+        #expect(progress.highlightCells.isEmpty)
+        #expect(progress.cellsAway == 5)
+    }
+
+    @Test func nothingHighlightedWhenStillFarAway() {
+        // Two in the top row is three to go: too far for a hint.
+        let progress = BingoEngine.evaluate(rule, marked: marks((0..<2).map { Cell(0, $0) }))
+        #expect(progress.cellsAway == 3)
+        #expect(progress.highlightCells.isEmpty)
+    }
+
+    @Test func tiedLinesAreAllHighlighted() {
+        // Top row and left column are each two away; both should be shown, not just the first.
+        let marked = marks([Cell(0, 0), Cell(0, 1), Cell(0, 2), Cell(1, 0), Cell(2, 0)])
+        let progress = BingoEngine.evaluate(rule, marked: marked)
+        #expect(progress.cellsAway == 2)
+        #expect(progress.highlightCells == [Cell(0, 3), Cell(0, 4), Cell(3, 0), Cell(4, 0)])
+    }
+
+    @Test func onlyTheClosestLinesAreHighlighted() {
+        // Top row is one away; the left column (two away) shouldn't be highlighted.
+        let marked = marks([Cell(0, 0), Cell(0, 1), Cell(0, 2), Cell(0, 3), Cell(1, 0), Cell(2, 0)])
+        let progress = BingoEngine.evaluate(rule, marked: marked)
+        #expect(progress.highlightCells == [Cell(0, 4)])
+    }
+
+    @Test func nothingHighlightedOnAWin() {
+        let progress = BingoEngine.evaluate(rule, marked: marks((0..<5).map { Cell(0, $0) }))
+        #expect(progress.highlightCells.isEmpty)
     }
 
     @Test func freeCenterCompletesMiddleRowThroughGame() {
