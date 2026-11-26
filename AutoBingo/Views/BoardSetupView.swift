@@ -36,7 +36,9 @@ struct BoardSetupView: View {
         @Bindable var store = store
 
         NavigationStack(path: $path) {
-            List(selection: $selection) {
+            // Only make rows selectable in Select mode: with a selection binding, a tap
+            // selects the row instead of following its NavigationLink.
+            List(selection: isSelecting ? $selection : nil) {
                 if !isSelecting {
                     Section {
                         BulkScanButtons { photos in store.addBoards(from: photos) }
@@ -221,7 +223,7 @@ struct BoardSetupView: View {
                 }
             }
         }
-        .tag(BoardsRoute.board(board.id))
+        .selectionTag(BoardsRoute.board(board.id), when: isSelecting)
         .swipeActions(edge: .leading) {
             if isActive {
                 Button("Put aside", systemImage: "pause.fill") {
@@ -247,7 +249,7 @@ struct BoardSetupView: View {
                 NavigationLink(value: BoardsRoute.group(group.id)) {
                     GroupRow(group: group, showsPlayButton: !isSelecting)
                 }
-                .tag(BoardsRoute.group(group.id))
+                .selectionTag(BoardsRoute.group(group.id), when: isSelecting)
                 .swipeActions(edge: .leading) {
                     if game.playState(of: group) == .playing {
                         Button("Stop", systemImage: "stop.fill") {
@@ -279,6 +281,15 @@ struct BoardSetupView: View {
                 Text("Group boards to put a whole set into play at once. A new group starts with the boards playing now.")
             }
         }
+    }
+}
+
+private extension View {
+    /// Tags a row for List selection only in Select mode. A tag whose type matches a
+    /// NavigationLink's value makes the List treat taps as selection, so the link never opens.
+    @ViewBuilder
+    func selectionTag(_ route: BoardsRoute, when selecting: Bool) -> some View {
+        if selecting { tag(route) } else { self }
     }
 }
 
